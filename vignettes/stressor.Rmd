@@ -1,0 +1,381 @@
+---
+title: "stressor"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{stressor}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteDepends{ggplot2}
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+library(ggplot2)
+```
+
+This package is designed to allow the user to apply multiple machine
+learning methods by calling simple commands for data exploration. `Python`
+has a library, called `PyCaret`, which uses pipeline processes for fitting
+multiple models with a few lines of code. The `stressor` package uses the
+`reticulate` package to allow `python` to be run in `R`, giving access to
+the same tools that exist in `python`. One of the strengths of `R` is
+exploration. The `stressor` package gives you the freedom to explore the
+machine learning models side by side.
+
+To get started, `stressor` requires that you have `Python` 3.8.10</a>
+installed on your computer. To install `Python`, please follow the
+instructions provided at:
+
+<p style="text-align:center;"><a href = https://www.python.org/downloads/release/python-3810/>
+https://www.python.org/downloads/release/python-3810/</a></p>
+
+Once Python is installed, you can install `stressor` from CRAN. For your
+convenience, we have attached `stressor` with the `library` statement to use the
+`python` features of `stressor.`
+
+```{r setup}
+library(stressor)
+```
+
+## Data Generation
+
+It is convenient when testing new functions or algorithms to be able to
+generate toy data sets. With these toy data sets, we can choose the
+distribution of the parameters, of the error term, and the
+underlying model of the toy data set.
+
+In this section, we will show an example of generating linear data with
+an epsilon and intercept that we chose. We will generate 500
+observations from a linear model with five independent variables and a
+y-intercept of zero. Observations are simulated from this model assuming
+that the residuals follow a normal distribution with a mean of zero and
+a standard deviation of one. With respect to the variables chosen, each
+variable is sampled from a normal distribution with mean zero and
+standard deviation of one. For this case, we chose to let the
+coefficients on each term be one, as we wanted each independent variable
+to be equally weighted. When we create the response variable, Y, it is
+the sum of each independent variable plus an epsilon term that is
+sampled from a standard normal distribution.
+
+```{r}
+set.seed(43421)
+lm_data <- data_gen_lm(500, weight_vec = rep(1, 5), y_int = 0, resp_sd = 1)
+head(lm_data)
+```
+
+### Validation of Data Generation
+Below is a visual of when we know the standard deviation of the epsilon term. We 
+can show that our models fit the data if we are close to the theoretical error. In the graphic below, the black dots represent the value given the current epsilon that we are on. The red line represents the expected theoretical error.
+```{r, echo = FALSE, warning=FALSE, fig.align='center', fig.height=5, fig.width = 5}
+# Data Verification
+simulation <- function(n, eps, weight_mat, label, test_size = 100, 
+                       seed = 43421) {
+  pred_accuracy <- matrix(0, nrow = length(eps), ncol = length(n))
+  conv_mat <- matrix(0, nrow = length(eps), ncol = length(n))
+  set.seed(seed)
+  for (i in seq_len(ncol(pred_accuracy))) {
+    for (j in seq_len(nrow(pred_accuracy))) {
+      temp <- data_gen_lm(n[i] + test_size, weight_mat = weight_mat, 
+                          resp_sd = eps[j])
+      test <- sample(nrow(temp), test_size)
+      data <- temp[-test,]
+      test <- temp[test, ]
+      test_y <- test[, 1]
+      test <- test[, -1]
+      obj <- lm(Y ~ ., data = data)
+      pred <- predict(obj, test)
+      pred_accuracy[j, i] <- sqrt(sum((test_y - pred)^2) / test_size)
+    }
+  }
+  pred_accuracy <- as.data.frame(pred_accuracy)
+  colnames(pred_accuracy) <- label
+  sim_list <- list(pred_accuracy, conv_mat)
+  return(sim_list)
+}
+eps <- seq(from = .1, to = 1, by = .1)
+n <- c(100, 300, 500, 700, 900, 1000) # add in 5000
+lab <- c("n = 100", "n = 300", "n = 500", "n = 700",
+         "n = 900", "n = 1000")
+weight_vec <- c(1, 3, 4, 5, 7)
+lm_accuracy_res <- simulation(n, eps, weight_vec, lab)
+lm_accuracy <- lm_accuracy_res[[1]]
+
+eps2 <- rep(seq(.1, 1, .1), 6)
+lm_results <- as.data.frame(eps2)
+rmse <- c(lm_accuracy$`n = 100`, lm_accuracy$`n = 300`,
+          lm_accuracy$`n = 500`, lm_accuracy$`n = 700`,
+          lm_accuracy$`n = 900`, lm_accuracy$`n = 1000`)
+lm_results$rmse <- rmse
+lm_results$groups <- c(rep("n = 100", 10), rep("n = 300", 10),
+                       rep("n = 500", 10), rep("n = 700", 10),
+                       rep("n = 900", 10), rep("n = 1000", 10))
+lm_results$groups <- factor(lm_results$groups, levels = lab)
+
+ggplot(lm_results, aes(x = eps2, y = rmse)) +
+  geom_point() +
+  geom_line(aes(x = eps2, y = eps2), color = "red") +
+  scale_x_continuous(name = "eps", breaks = seq(0, 1, by = .2), 
+                     limits = c(0.0, 1.05)) +
+  scale_y_continuous(breaks = seq(0, 1.2, by = .2), limits = c(0, 1.2)) +
+  facet_wrap(~ groups, nrow = 2) +
+  ggtitle("Linear Model Validation") +
+  theme(axis.title=element_text(size=14,face="bold"),
+        axis.text.x = element_text(angle = 45))
+```
+
+## Machine Learning Model Workflow
+
+In this section, we will demonstrate a typical workflow using the
+functions of this package to explore the machine learning models (mlm)
+that are accessible through the `PyCaret` module in `python`. First, we need
+to create a virtual environment for the `PyCaret` module to exist in. The
+first time you run this code it will take some time (\~ 5 min), as it
+needs to install the necessary modules into the virtual environment. Note that 
+this virtual environment will be about 1 GB of space on the user's disk.
+`PyCaret` recommends that its library be used in a virtual environment. A
+virtual environment is a separate partition of `python` that can have a
+specific `python` version installed, as well as other `python` libraries.
+This enables the tools needed to be contained without disturbing the
+main version of `python` installed.
+
+Once installed, the following message will be shown after you execute the
+code indicating that you are now using the virtual environment.
+
+```{r, eval=FALSE}
+create_virtualenv()
+```
+
+See the <a 
+href=#troubleshoot>troubleshoot</a> section if other errors appear. The
+only time you will need to install a new environment is if you decide to
+delete a `stressor` environment and need to initiate a new one. You do not
+need to install a new environment for each `R` session, it is one and done.
+These environments are stored inside the `python` module on your computer.
+
+To begin using, we need to create all the mlm. This may take a moment
+(\< 3 min) the first time you run it, as the `PyCaret` module needs to be
+imported. Then depending on your data size it may take a moment (\< 5
+min for data \<10,000) to fit the data. Note that console output will be shown and a progress bar will be displayed showing the progress of the fitting.
+
+For reproducibility, we have set the seed again and have defined a new data
+set, and set the seed for the `python` side by passing the seed to the
+function. Here are the commands:
+
+```{r, eval = FALSE}
+set.seed(43421)
+lm_data <- data_gen_lm(1000)
+# Split the data into a 80/20 split
+indices <- split_data_prob(lm_data, .8)
+train <- lm_data[indices, ]
+test <- lm_data[!indices, ]
+# Tune the models
+mlm_lm <- mlm_regressor(Y ~ ., lm_data, sort_v = 'RMSE', seed = 43421)
+```
+
+```{r echo=FALSE}
+pred <- readRDS(file = "pred_lm.rds")
+cv <- readRDS(file = "mlm_lm_cv.rds")
+mlm_vignette <- list(pred_accuracy = pred, mlm_lm_cv = cv)
+mlm_score <- as.data.frame(readRDS("mlm_test.rds"))
+top_RMSE <- min(mlm_score$rmse)
+name_RMSE <- mlm_vignette$pred_accuracy$Model[which(mlm_score$rmse == top_RMSE)]
+```
+
+Now, we can look at the initial training predictive accuracy measures such as
+RMSE. The `mlm_lm` is a list object where the first element is a list of
+all the models that were fitted. For example, if we were to pass these models
+back to `PyCaret`, they can be refitted or used again for predictions. The
+second element is a data frame for the initial  values and the
+corresponding models. If you want to specify the models that are fitted,
+you can change the `fit_models` parameter -- a character vector --
+specifying the models to be used. Also we can change how the models are sorted
+based upon the metrics listed which is given to the `sort_v` variable.
+
+```{r, eval = FALSE}
+mlm_lm$pred_accuracy
+```
+
+```{r, echo = FALSE}
+mlm_vignette$pred_accuracy
+```
+
+We pulled out a test validation set and we can currently check the accuracy
+measures of those predicted values, such as RMSE.
+
+```{r, eval = FALSE}
+pred_lm <- predict(mlm_lm, test)
+score(test$Y, pred_lm)
+```
+
+```{r, echo = FALSE}
+mlm_score
+```
+
+
+In comparison, we can fit this data using the `lm()` function and check
+the initial predictive accuracy with simple test data.
+
+```{r}
+test_index <- split_data_prob(lm_data, .2)
+test <- lm_data[test_index, ]
+train <- lm_data[!test_index, ]
+lm_test <- lm(Y ~ ., train)
+lm_pred <- predict(lm_test, newdata = test)
+lm_score <- score(test$Y, lm_pred)
+lm_score
+```
+
+As we look at this initial result, we see that there are some comparable
+models to the RMSE generated from `lm()` (which is
+`r trunc(lm_score[1] * 100)/100` compared to `r trunc(top_RMSE * 100)/100`
+fitted by `r name_RMSE`). We see that the mlm
+outperforms the models that were fitted by `lm()`. However, it is not
+clear from this output alone whether the better performance observed
+from the lm model is statistically significant. A better practice would
+be performing a cross-validation.
+
+In this code we are fitting the `mlm_lm` and `lm_test` to the `lm_data`
+using a 10 fold cross-validation.
+
+First the ML models:
+```{r, eval = FALSE}
+mlm_cv <- cv(mlm_lm, lm_data, n_folds = 10)
+```
+
+Then the `lm_test`:
+```{r}
+lm_cv <- cv(lm_test, lm_data, n_folds = 10)
+```
+
+```{r, echo = FALSE}
+mlm_cv <- mlm_vignette$mlm_lm_cv
+```
+
+Now to compare the corresponding RMSE.
+```{r}
+score(lm_data$Y, mlm_cv)
+score(lm_data$Y, lm_cv)
+```
+
+We can see that the top five ML models are close in value to the linear model.
+
+## Real Data Example
+
+We want to show how our functions apply to a real data example. We can
+simulate data, but it is never quite like observed data. The purpose of
+this data set is to show the use of the functions in this package --
+specifically cross-validation. This is crucial to show how these work in
+comparison to existing functions.
+
+We will be using the Boston Housing Data from the `mlbench` package.
+There are two versions of this data, the second version includes a
+corrected `medv` value, standardizing the median income to USD 1000's.
+As some of the original data was missing. This data version also has had
+the town, tract, longitude and latitude added. For this analysis, we are
+ignoring spatial autocorrelation and therefore will be removing these
+variables from the analysis.
+
+This next code chunk opens the cleaned Boston data set attached to this
+package and fits the initial machine learning models. It then displays
+the initial values from the first fit.
+
+```{r eval=FALSE}
+data(boston)
+mlm_boston <- mlm_regressor(cmedv ~ ., boston)
+mlm_boston$pred_accuracy
+```
+
+```{r echo=FALSE}
+data(boston)
+mlm_boston_pred_accuracy <- readRDS(file = "pred.rds")
+mlm_boston_pred_accuracy
+```
+
+Observe the initial values for the Boston data set. Now compare
+these to the cross-validated values.
+
+```{r eval=FALSE}
+mlm_boston_cv <- cv(mlm_boston, boston, n_folds = 10)
+mlm_boston_score <- score(boston$cmedv, mlm_boston_cv)
+mlm_boston_score
+```
+
+```{r echo=FALSE}
+cv_data <- readRDS(file = "cv.rds")
+mlm_boston_score <- score(boston$cmedv, cv_data)
+mlm_boston_score
+```
+
+Clustered cross-validation is subsetting the parameter space into groups
+that share similar attributes with one another. Therefore, if we train on
+those groups the other group should fit similarly across the test group.
+
+Now, compare to the clustered cross-validation:
+
+```{r eval=FALSE}
+mlm_boston_clust_cv <- cv(mlm_boston, boston, n_folds = 10, k_mult = 5)
+mlm_boston_clust_score <- score(boston$cmedv, mlm_boston_clust_cv)
+mlm_boston_clust_score
+```
+
+```{r echo=FALSE}
+clus_data <- readRDS(file = "cluster.rds")
+boston_clust_score <- score(boston$cmedv, clus_data)
+boston_clust_score
+```
+
+What we notice about this result is when we ignore spatial
+autocorrelation and we compare the 10 fold cross-validation with the
+clustered cross-validation, we see a general improvement in the 
+values. This suggests that maybe there is some other underlying factors,
+i.e. spatial relationships.
+
+The power to be able to explore is a compliment to the purpose of R.
+With `stressor`, you are able to fit multiple machine learning models with
+a few lines of code and  perform 10 fold cross-validation and clustered
+cross-validation. With a simple command, you can return the values
+from the predictions.
+
+## Troubleshooting
+
+When initiating the virtual environment, you may receive some errors or
+warnings. `reticulate` has done a nice job with the error handling of
+initiating the virtual environments. `reticulate` is a package in `R` that
+handles the connection between `R` and `python`.
+
+For MacOS and Linux, please note that the `create_virtualenv()` function will 
+not work unless you have `cmake`. `lightgbm` requires this compiler and they
+have detailed instructions of how to install it, see <a href = "https://github.com/microsoft/LightGBM/blob/master/docs/Installation-Guide.rst">
+here</a>.
+
+If your system is not recognizing the `python` path that you have, you will need to
+add it to your system variables, or specify initially the python path that 
+`create_virtualenv()` needs to use. If you are still having trouble getting the
+virtual environment to start you can use `reticulate`'s function 
+`reticulate::use_virtualenv()`. It also helps sometimes to unset the `RETICULATE_PYTHON` variable. Also note that if the environment has `python` objects in it the user will have to clear them to restart the `reticulate` `python` version. 
+
+If you receive a warning that says
+
+<p style="text-align:center; color:darkred">"Warning Message: Previous request to use_python() ... will be ignored.
+It is superseded by request to use_python()"</p>
+
+If the second `use_python` command has the matching virtual environment
+you can ignore this warning and continue with your analysis.
+
+If you receive an error stating
+
+<p style="text-align:center; color:darkred">ERROR: The requested version of 
+Python ... cannot be used, as another
+version of Python ... has already been initialized. Please restart the R
+session if you need to attach reticulate to a different version of
+Python.</p>
+
+If this error appears, restart your R session and make sure to clear all `python`
+objects. Then run the `create_virtualenv()` function again. There should be no problems
+attaching it after that, as long as your environment does not contain any `Python` objects.

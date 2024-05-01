@@ -1,7 +1,7 @@
 Package: stressor
 Type: Package
 Title: Algorithms for Testing Models under Stress
-Version: 0.1.0
+Version: 0.2.0
 Authors@R: c(
     person("Sam", "Haycock", email = "haycock.sam@outlook.com",
     role = c("aut", "cre")),
@@ -16,7 +16,7 @@ Description: Traditional model evaluation metrics fail to capture model
     models' extrapolation ability, or testing accuracy on specific 
     sub-samples of the overall model space. Details describing stress-testing 
     methods in this package are provided in 
-    Haycock (2023) <doi:10.26076/2am5-9f67>. The other primary contribution of 
+    Haycock (2023) <doi:10.26076/2am5-9f67>. The other primary contribution of
     this package is provided to R users access to the 'Python' library 'PyCaret'
     <https://pycaret.org/> for quick and easy access to auto-tuned 
     machine learning models. 
@@ -31,11 +31,11 @@ Imports: reticulate, stats, dplyr
 VignetteBuilder: knitr
 Depends: R (>= 3.5)
 NeedsCompilation: no
-Packaged: 2024-01-24 20:22:19 UTC; 14357
+Packaged: 2024-05-01 02:41:58 UTC; 14357
 Author: Sam Haycock [aut, cre],
   Brennan Bean [aut],
   Utah State University [cph, fnd],
   Thermo Fisher Scientific Inc. [fnd]
 Maintainer: Sam Haycock <haycock.sam@outlook.com>
 Repository: CRAN
-Date/Publication: 2024-01-31 14:40:02 UTC
+Date/Publication: 2024-05-01 04:00:03 UTC

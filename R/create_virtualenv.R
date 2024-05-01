@@ -58,7 +58,7 @@ create_virtualenv <- function(python = Sys.which('python'),
     message(paste("Created Virtual Environment:",
                   paste0("stressor-env", time)))
     message("Installing pycaret")
-    reticulate::py_install("pycaret",
+    reticulate::py_install(packages = c("pycaret==3.2.0", "joblib==1.3.0"),
                            envname = paste0("stressor-env", time))
     # Possible Parallelization
     # reticulate::py_install("fugue",
